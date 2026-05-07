@@ -1,0 +1,33 @@
+node_modules
+.next
+out
+build
+dist
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local/editor state
+.vercel
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Source template and private build notes
+lazorpay-main/
+spec.md
+plan.md
+architecture.md
+cloak-research.md
+demo-script.md
+demo-video-outline.md
+brand.md
+public/logo.png
