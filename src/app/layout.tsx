@@ -19,6 +19,11 @@ export const metadata: Metadata = {
     "web3",
   ],
   authors: [{ name: "Sipher" }],
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg",
+  },
   openGraph: {
     title: "Sipher",
     description: "A privacy-native treasury operations product built on Cloak.",

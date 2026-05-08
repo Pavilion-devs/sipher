@@ -35,13 +35,10 @@ function Sidebar({ disconnect }: { disconnect: () => void }) {
             src="/logo.svg"
             alt="Sipher"
             width={120}
-            height={120}
+            height={32}
             className="h-10 w-auto rounded-lg"
             priority
           />
-          <span className="text-xs uppercase tracking-[0.22em] text-white/75">
-            Sipher
-          </span>
         </Link>
       </div>
 

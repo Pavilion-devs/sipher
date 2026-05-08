@@ -34,13 +34,10 @@ export function Footer() {
                 <Image
                   src="/logo.svg"
                   alt="Sipher"
-                  width={60}
-                  height={60}
-                  className="rounded-lg"
+                  width={140}
+                  height={38}
+                  className="h-10 w-auto rounded-lg"
                 />
-                <span className="text-xs uppercase tracking-[0.24em] text-white/80">
-                  Sipher
-                </span>
               </Link>
               <p className="max-w-sm text-sm tracking-tight text-zinc-400">
                 Privacy-native treasury operations for Solana teams. Shield

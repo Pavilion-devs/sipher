@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Menu, X } from "lucide-react";
-import { ConnectButton, WalletBadge } from "@/components/wallet/ConnectButton";
+import { ConnectButton } from "@/components/wallet/ConnectButton";
 
 const navLinks = [
   { href: "/", label: "Home" },
@@ -23,13 +23,10 @@ export function Header() {
           <Image
             src="/logo.svg"
             alt="Sipher"
-            width={44}
-            height={44}
-            className="rounded-lg"
+            width={120}
+            height={32}
+            className="h-8 w-auto rounded-lg"
           />
-          <span className="text-xs uppercase tracking-[0.24em] text-white/80">
-            Sipher
-          </span>
         </Link>
 
         <div className="hidden items-center gap-8 md:flex">
@@ -45,7 +42,6 @@ export function Header() {
         </div>
 
         <div className="hidden items-center gap-3 md:flex">
-          <WalletBadge />
           <ConnectButton variant="outline" />
         </div>
 
