@@ -3,7 +3,8 @@ import type { TreasuryActivity } from "@/types";
 const VIOLET = [124, 58, 237] as [number, number, number];
 const DARK = [18, 18, 28] as [number, number, number];
 const MUTED = [100, 100, 120] as [number, number, number];
-const LIGHT = [246, 246, 250] as [number, number, number];
+const LIGHT = [232, 232, 242] as [number, number, number];
+const STAT_BG = [240, 238, 252] as [number, number, number];
 
 function formatSig(sig: string) {
   if (sig.length <= 20) return sig;
@@ -29,7 +30,7 @@ async function buildPdf(
   });
   const period =
     opts.afterDate && opts.beforeDate
-      ? `${opts.afterDate} – ${opts.beforeDate}`
+      ? `${opts.afterDate} - ${opts.beforeDate}`
       : opts.afterDate
         ? `From ${opts.afterDate}`
         : opts.beforeDate
@@ -87,7 +88,7 @@ async function buildPdf(
   const boxW = (W - 56 - stats.length * 8) / stats.length;
   stats.forEach((stat, i) => {
     const x = 28 + i * (boxW + 8);
-    doc.setFillColor(...LIGHT);
+    doc.setFillColor(...STAT_BG);
     doc.roundedRect(x, 82, boxW, 36, 4, 4, "F");
     doc.setTextColor(...MUTED);
     doc.setFontSize(6.5);
@@ -103,7 +104,7 @@ async function buildPdf(
   const rows = activities.map((a) => [
     new Date(a.createdAt).toLocaleDateString(),
     a.type.charAt(0).toUpperCase() + a.type.slice(1),
-    a.asset + (a.outputAsset ? ` → ${a.outputAsset}` : ""),
+    a.asset + (a.outputAsset ? ` -> ${a.outputAsset}` : ""),
     a.grossAmount.toFixed(4),
     a.feeAmount.toFixed(6),
     a.netAmount.toFixed(4),
@@ -132,7 +133,7 @@ async function buildPdf(
     columnStyles: {
       0: { cellWidth: 58 },
       1: { cellWidth: 46 },
-      2: { cellWidth: 60 },
+      2: { cellWidth: 80 },
       3: { cellWidth: 50 },
       4: { cellWidth: 58 },
       5: { cellWidth: 50 },

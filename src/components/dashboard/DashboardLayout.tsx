@@ -42,11 +42,6 @@ function Sidebar({ disconnect, network }: { disconnect: () => void; network: str
             priority
           />
         </Link>
-        {network === "devnet" ? (
-          <div className="mt-3 inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-widest text-amber-300">
-            Devnet
-          </div>
-        ) : null}
       </div>
 
       <nav className="flex-1 space-y-1 p-4">
