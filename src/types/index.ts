@@ -1,5 +1,7 @@
 export type Asset = "SOL" | "USDC" | "USDT";
 
+export type Network = "mainnet" | "devnet";
+
 export interface PayoutRecipient {
   id: string;
   name: string;

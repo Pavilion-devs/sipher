@@ -1,12 +1,17 @@
 import type {
   ComplianceCache,
+  Network,
   PayoutRun,
   TreasuryActivity,
   TreasuryOwnerKeypair,
 } from "@/types";
 
-const STORAGE_KEYS = {
+const GLOBAL_KEYS = {
+  network: "sipher_network",
   selectedWallet: "sipher_selected_wallet",
+} as const;
+
+const NETWORK_KEY_BASES = {
   payoutRuns: "sipher_runs",
   manualActivities: "sipher_manual_activities",
   utxoWallet: "sipher_utxo_wallet",
@@ -14,8 +19,7 @@ const STORAGE_KEYS = {
   complianceCache: "sipher_compliance_cache",
 } as const;
 
-const LEGACY_STORAGE_KEYS: Record<keyof typeof STORAGE_KEYS, string> = {
-  selectedWallet: "shadow_treasury_selected_wallet",
+const LEGACY_KEY_BASES: Record<keyof typeof NETWORK_KEY_BASES, string> = {
   payoutRuns: "shadow_treasury_runs",
   manualActivities: "shadow_treasury_manual_activities",
   utxoWallet: "shadow_treasury_utxo_wallet",
@@ -29,7 +33,6 @@ function canUseStorage() {
 
 function safeParse<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
-
   try {
     return JSON.parse(value) as T;
   } catch {
@@ -37,85 +40,107 @@ function safeParse<T>(value: string | null, fallback: T): T {
   }
 }
 
-function getItem(keyName: keyof typeof STORAGE_KEYS) {
-  if (!canUseStorage()) return null;
+function getStoredNetworkRaw(): Network {
+  if (!canUseStorage()) return "mainnet";
+  return (window.localStorage.getItem(GLOBAL_KEYS.network) as Network) || "mainnet";
+}
 
-  const key = STORAGE_KEYS[keyName];
+function getNetworkedKey(base: keyof typeof NETWORK_KEY_BASES): string {
+  return `${NETWORK_KEY_BASES[base]}_${getStoredNetworkRaw()}`;
+}
+
+function getNetworkedItem(base: keyof typeof NETWORK_KEY_BASES): string | null {
+  if (!canUseStorage()) return null;
+  const key = getNetworkedKey(base);
   const value = window.localStorage.getItem(key);
   if (value !== null) return value;
 
-  const legacyValue = window.localStorage.getItem(LEGACY_STORAGE_KEYS[keyName]);
-  if (legacyValue !== null) {
-    window.localStorage.setItem(key, legacyValue);
+  // Mainnet only: migrate data from legacy unnamespaced keys on first access
+  if (getStoredNetworkRaw() === "mainnet") {
+    const unnamedValue = window.localStorage.getItem(NETWORK_KEY_BASES[base]);
+    if (unnamedValue !== null) {
+      window.localStorage.setItem(key, unnamedValue);
+      return unnamedValue;
+    }
+    const legacyValue = window.localStorage.getItem(LEGACY_KEY_BASES[base]);
+    if (legacyValue !== null) {
+      window.localStorage.setItem(key, legacyValue);
+      return legacyValue;
+    }
   }
 
-  return legacyValue;
+  return null;
 }
 
-function setItem(keyName: keyof typeof STORAGE_KEYS, value: string | null) {
+function setNetworkedItem(base: keyof typeof NETWORK_KEY_BASES, value: string | null) {
   if (!canUseStorage()) return;
-
-  const key = STORAGE_KEYS[keyName];
-
+  const key = getNetworkedKey(base);
   if (value === null) {
     window.localStorage.removeItem(key);
-    window.localStorage.removeItem(LEGACY_STORAGE_KEYS[keyName]);
     return;
   }
-
   window.localStorage.setItem(key, value);
 }
 
+export function getStoredNetwork(): Network {
+  return getStoredNetworkRaw();
+}
+
+export function setStoredNetwork(network: Network) {
+  if (!canUseStorage()) return;
+  window.localStorage.setItem(GLOBAL_KEYS.network, network);
+}
+
 export function getSelectedWalletId() {
-  return getItem("selectedWallet");
+  if (!canUseStorage()) return null;
+  return window.localStorage.getItem(GLOBAL_KEYS.selectedWallet);
 }
 
 export function setSelectedWalletId(walletId: string | null) {
-  setItem("selectedWallet", walletId);
+  if (!canUseStorage()) return;
+  if (walletId === null) {
+    window.localStorage.removeItem(GLOBAL_KEYS.selectedWallet);
+    return;
+  }
+  window.localStorage.setItem(GLOBAL_KEYS.selectedWallet, walletId);
 }
 
 export function getPayoutRuns(): PayoutRun[] {
-  return safeParse<PayoutRun[]>(getItem("payoutRuns"), []);
+  return safeParse<PayoutRun[]>(getNetworkedItem("payoutRuns"), []);
 }
 
 export function setPayoutRuns(runs: PayoutRun[]) {
-  setItem("payoutRuns", JSON.stringify(runs));
+  setNetworkedItem("payoutRuns", JSON.stringify(runs));
 }
 
 export function getManualActivities(): TreasuryActivity[] {
-  return safeParse<TreasuryActivity[]>(getItem("manualActivities"), []);
+  return safeParse<TreasuryActivity[]>(getNetworkedItem("manualActivities"), []);
 }
 
 export function setManualActivities(activities: TreasuryActivity[]) {
-  setItem("manualActivities", JSON.stringify(activities));
+  setNetworkedItem("manualActivities", JSON.stringify(activities));
 }
 
 export function getStoredUtxoWallet() {
-  return getItem("utxoWallet");
+  return getNetworkedItem("utxoWallet");
 }
 
 export function setStoredUtxoWallet(serializedWallet: string | null) {
-  setItem("utxoWallet", serializedWallet);
+  setNetworkedItem("utxoWallet", serializedWallet);
 }
 
 export function getTreasuryOwner() {
-  return safeParse<TreasuryOwnerKeypair | null>(
-    getItem("treasuryOwner"),
-    null,
-  );
+  return safeParse<TreasuryOwnerKeypair | null>(getNetworkedItem("treasuryOwner"), null);
 }
 
 export function setTreasuryOwner(owner: TreasuryOwnerKeypair | null) {
-  setItem("treasuryOwner", owner ? JSON.stringify(owner) : null);
+  setNetworkedItem("treasuryOwner", owner ? JSON.stringify(owner) : null);
 }
 
 export function getComplianceCache() {
-  return safeParse<ComplianceCache | null>(
-    getItem("complianceCache"),
-    null,
-  );
+  return safeParse<ComplianceCache | null>(getNetworkedItem("complianceCache"), null);
 }
 
 export function setComplianceCache(cache: ComplianceCache | null) {
-  setItem("complianceCache", cache ? JSON.stringify(cache) : null);
+  setNetworkedItem("complianceCache", cache ? JSON.stringify(cache) : null);
 }

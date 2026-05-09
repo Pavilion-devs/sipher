@@ -174,7 +174,7 @@ export default function HistoryPage() {
     activities,
     snapshot,
     rescanHistory,
-    exportHistoryCsv,
+    exportHistoryPdf,
     clearHistoryCache,
     isScanning,
     statusMessage,
@@ -279,7 +279,7 @@ export default function HistoryPage() {
 
   const handleExport = () => {
     if (hasInvalidDateRange) return;
-    void exportHistoryCsv({ afterTimestamp, beforeTimestamp });
+    void exportHistoryPdf({ afterTimestamp, beforeTimestamp });
   };
 
   const clearFilters = () => {
@@ -329,7 +329,7 @@ export default function HistoryPage() {
             className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-violet-600/90 px-4 py-2 text-sm font-medium tracking-tight text-white transition-all hover:scale-[1.02] hover:bg-violet-500 focus-visible:ring-2 focus-visible:ring-violet-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Download className="h-4 w-4" />
-            Export CSV
+            Export PDF
           </button>
         </div>
       </div>

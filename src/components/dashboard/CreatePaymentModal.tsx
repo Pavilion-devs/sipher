@@ -52,7 +52,7 @@ export function CreatePayoutRunModal({
   isOpen: boolean;
   onClose: () => void;
 }) {
-  const { createPayoutRun, isSubmittingRun, clearStatus, snapshot } = useApp();
+  const { createPayoutRun, isSubmittingRun, clearStatus, snapshot, network } = useApp();
   const [step, setStep] = useState<"edit" | "review">("edit");
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
@@ -262,8 +262,12 @@ export function CreatePayoutRunModal({
                               className="w-full rounded-xl border border-white/10 bg-zinc-900/50 px-4 py-3 text-sm tracking-tight text-white focus:border-violet-500/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60"
                             >
                               <option value="SOL">SOL</option>
-                              <option value="USDC">USDC</option>
-                              <option value="USDT">USDT</option>
+                              <option value="USDC">
+                                {network === "devnet" ? "USDC (mock)" : "USDC"}
+                              </option>
+                              {network !== "devnet" ? (
+                                <option value="USDT">USDT</option>
+                              ) : null}
                             </select>
                           </div>
 

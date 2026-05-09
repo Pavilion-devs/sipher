@@ -6,6 +6,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   ChevronRight,
+  Eye,
   Home,
   Layers3,
   LogOut,
@@ -22,9 +23,10 @@ const sidebarItems = [
   { icon: Layers3, label: "Payouts", href: "/dashboard/payouts" },
   { icon: ScrollText, label: "History", href: "/dashboard/history" },
   { icon: Settings, label: "Settings", href: "/dashboard/settings" },
+  { icon: Eye, label: "Auditor View", href: "/audit", external: true },
 ];
 
-function Sidebar({ disconnect }: { disconnect: () => void }) {
+function Sidebar({ disconnect, network }: { disconnect: () => void; network: string }) {
   const pathname = usePathname();
 
   return (
@@ -40,11 +42,30 @@ function Sidebar({ disconnect }: { disconnect: () => void }) {
             priority
           />
         </Link>
+        {network === "devnet" ? (
+          <div className="mt-3 inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-widest text-amber-300">
+            Devnet
+          </div>
+        ) : null}
       </div>
 
       <nav className="flex-1 space-y-1 p-4">
         {sidebarItems.map((item) => {
           const isActive = pathname === item.href;
+          if ("external" in item && item.external) {
+            return (
+              <a
+                key={item.href}
+                href={item.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex items-center gap-3 rounded-xl px-4 py-3 text-zinc-400 transition-all duration-300 hover:bg-white/5 hover:text-white"
+              >
+                <item.icon className="h-5 w-5" />
+                <span className="text-sm font-medium tracking-tight">{item.label}</span>
+              </a>
+            );
+          }
           return (
             <Link
               key={item.href}
@@ -86,7 +107,7 @@ function Sidebar({ disconnect }: { disconnect: () => void }) {
 }
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { isConnected, disconnect } = useApp();
+  const { isConnected, disconnect, network } = useApp();
 
   if (!isConnected) {
     return (
@@ -121,7 +142,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar disconnect={disconnect} />
+      <Sidebar disconnect={disconnect} network={network} />
       <main className="ml-64 flex-1 p-8">{children}</main>
     </div>
   );

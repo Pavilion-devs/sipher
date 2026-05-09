@@ -32,7 +32,9 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import type { ComplianceReport, MerkleTree, UtxoKeypair } from "@cloak.dev/sdk";
 import type {
   Asset,
+  CloakRuntimeConfig,
   ComplianceCache,
+  Network,
   OperationLog,
   PayoutRecipient,
   PayoutRecipientExecution,
@@ -42,7 +44,8 @@ import type {
   TreasurySnapshot,
   WalletOption,
 } from "@/types";
-import { CLOAK_RUNTIME, getMintForAsset } from "@/lib/cloak/config";
+import { CLOAK_RUNTIME, getMintForAsset, getRuntimeForNetwork } from "@/lib/cloak/config";
+import { getPythSwapInputLamports } from "@/lib/pyth/client";
 import {
   MIN_SHIELD_SOL,
   assetAmountToUnits,
@@ -53,18 +56,21 @@ import {
   solToLamports,
   unitsToAssetAmount,
 } from "@/lib/cloak/amounts";
+import { downloadCompliancePdf } from "@/lib/utils/pdf";
 import { getJupiterExactOutQuote } from "@/lib/jupiter/client";
 import {
   getComplianceCache,
   getManualActivities,
   getPayoutRuns,
   getSelectedWalletId,
+  getStoredNetwork,
   getStoredUtxoWallet,
   getTreasuryOwner,
   setComplianceCache,
   setManualActivities,
   setPayoutRuns,
   setSelectedWalletId,
+  setStoredNetwork,
   setStoredUtxoWallet,
   setTreasuryOwner,
 } from "@/lib/utils/storage";
@@ -86,7 +92,8 @@ type AppContextValue = {
   payoutRuns: PayoutRun[];
   activities: TreasuryActivity[];
   snapshot: TreasurySnapshot;
-  runtime: typeof CLOAK_RUNTIME;
+  runtime: CloakRuntimeConfig;
+  network: Network;
   statusMessage: string | null;
   lastError: string | null;
   hasTreasuryOwner: boolean;
@@ -112,13 +119,15 @@ type AppContextValue = {
     afterTimestamp?: number;
     beforeTimestamp?: number;
   }) => Promise<void>;
-  exportHistoryCsv: (options?: {
+  exportHistoryPdf: (options?: {
     afterTimestamp?: number;
     beforeTimestamp?: number;
   }) => Promise<void>;
+  viewingKey: string | null;
   clearHistoryCache: () => void;
   clearOperationLogs: () => void;
   clearStatus: () => void;
+  switchNetwork: (network: Network) => void;
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -406,6 +415,69 @@ async function probeUrl(url: string) {
   }
 }
 
+function parseSwapSubmissionStatus(status: string) {
+  const match = status.match(
+    /TransactSwap submitted:\s*([^,]+),\s*request_id:\s*([^,]+),\s*swap_state:\s*(.*)$/i,
+  );
+
+  if (!match) return null;
+
+  return {
+    signature: match[1]?.trim() || null,
+    requestId: match[2]?.trim() || null,
+    swapState: match[3]?.trim() || null,
+  };
+}
+
+function isSwapTimeoutError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Swap execution did not complete within timeout");
+}
+
+function isSwapStaleRootProofError(error: unknown, relayMessage = "") {
+  const message = `${error instanceof Error ? error.message : String(error)} ${relayMessage}`;
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes("stale root") ||
+    normalized.includes("stale root/proof") ||
+    normalized.includes("tx1 was not confirmed") ||
+    normalized.includes("nullifier is absent on-chain") ||
+    normalized.includes("swapstate is missing")
+  );
+}
+
+async function wait(ms: number) {
+  await new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function fetchRelayStatus(relayUrl: string, requestId: string) {
+  const url = `${relayUrl.replace(/\/$/, "")}/status/${encodeURIComponent(
+    requestId,
+  )}`;
+  const response = await fetch(url, { cache: "no-store" });
+  const body = (await response.json().catch(() => null)) as
+    | {
+        success?: boolean;
+        data?: {
+          status?: string;
+          swap_phase?: string;
+          error?: string;
+          solana_signature?: string;
+          tx_id?: string;
+          slots_remaining?: number;
+        };
+        error?: unknown;
+      }
+    | null;
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    body,
+  };
+}
+
 function toFriendlyError(error: unknown) {
   const rawMessage = error instanceof Error ? error.message : String(error);
 
@@ -440,13 +512,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     null,
   );
   const merkleTreeRef = useRef<MerkleTree | null>(null);
+  const [network] = useState<Network>(() => getStoredNetwork());
+  const activeRuntime = useMemo(() => getRuntimeForNetwork(network), [network]);
   const connection = useMemo(
-    () => new Connection(CLOAK_RUNTIME.rpcUrl, "confirmed"),
-    [],
+    () => new Connection(activeRuntime.rpcUrl, "confirmed"),
+    [activeRuntime.rpcUrl],
   );
   const programId = useMemo(
-    () => new PublicKey(CLOAK_RUNTIME.programId),
-    [],
+    () => new PublicKey(activeRuntime.programId),
+    [activeRuntime.programId],
   );
   const [availableWallets, setAvailableWallets] = useState<WalletOption[]>([]);
   const [walletLabel, setWalletLabel] = useState<string | null>(null);
@@ -496,8 +570,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
-    setCircuitsPath(CLOAK_RUNTIME.circuitsUrl);
-  }, []);
+    setCircuitsPath(activeRuntime.circuitsUrl);
+  }, [activeRuntime.circuitsUrl]);
 
   useEffect(() => {
     const detectWallets = () => {
@@ -787,10 +861,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           message: "Shield flow started.",
           details: {
             amountSol,
-            rpcHost: getHost(CLOAK_RUNTIME.rpcUrl),
-            relayHost: getHost(CLOAK_RUNTIME.relayUrl),
-            circuitsUrl: maskUrl(CLOAK_RUNTIME.circuitsUrl),
-            programId: CLOAK_RUNTIME.programId,
+            rpcHost: getHost(activeRuntime.rpcUrl),
+            relayHost: getHost(activeRuntime.relayUrl),
+            circuitsUrl: maskUrl(activeRuntime.circuitsUrl),
+            programId: activeRuntime.programId,
           },
         });
 
@@ -828,7 +902,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           },
         });
 
-        const zkeyUrl = `${CLOAK_RUNTIME.circuitsUrl.replace(
+        const zkeyUrl = `${activeRuntime.circuitsUrl.replace(
           /\/$/,
           "",
         )}/transaction_final.zkey`;
@@ -895,8 +969,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           status: "info",
           message: "Calling Cloak transact deposit path.",
           details: {
-            relayUrl: maskUrl(CLOAK_RUNTIME.relayUrl),
-            rpcUrl: maskUrl(CLOAK_RUNTIME.rpcUrl),
+            relayUrl: maskUrl(activeRuntime.relayUrl),
+            rpcUrl: maskUrl(activeRuntime.rpcUrl),
           },
         });
 
@@ -910,7 +984,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           {
             connection,
             programId,
-            relayUrl: CLOAK_RUNTIME.relayUrl,
+            relayUrl: activeRuntime.relayUrl,
             signTransaction: async (transaction) => {
               appendOperationLog({
                 operation: "shield",
@@ -1039,6 +1113,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [
+      activeRuntime,
       clearStatus,
       clearOperationLogs,
       connection,
@@ -1125,9 +1200,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           details: {
             title,
             recipients: cleanedRecipients.length,
-            rpcHost: getHost(CLOAK_RUNTIME.rpcUrl),
-            relayHost: getHost(CLOAK_RUNTIME.relayUrl),
-            programId: CLOAK_RUNTIME.programId,
+            rpcHost: getHost(activeRuntime.rpcUrl),
+            relayHost: getHost(activeRuntime.relayUrl),
+            programId: activeRuntime.programId,
           },
         });
 
@@ -1220,7 +1295,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                   {
                     connection,
                     programId,
-                    relayUrl: CLOAK_RUNTIME.relayUrl,
+                    relayUrl: activeRuntime.relayUrl,
                     walletPublicKey: walletState.walletPublicKey,
                     signMessage: async (message) => {
                       appendOperationLog({
@@ -1354,7 +1429,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             continue;
           }
 
-          const outputMint = getMintForAsset(recipient.asset);
+          const outputMint = getMintForAsset(recipient.asset, network);
 
           if (!outputMint) {
             throw new Error(`Unsupported payout asset ${recipient.asset}.`);
@@ -1363,6 +1438,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           let swapSettled = false;
 
           for (let attempt = 1; attempt <= 3; attempt += 1) {
+            let lastSwapRequestId: string | null = null;
+            let lastSwapState: string | null = null;
+            let lastSwapSubmissionSignature: string | null = null;
+
             try {
               commitRun((run) =>
                 updateExecutionState(run, recipient.id, {
@@ -1375,13 +1454,55 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 recipient.asset,
                 recipient.amount,
               );
-              const quote = await getJupiterExactOutQuote({
-                outputMint: outputMint.toBase58(),
-                outputAmount: targetOutputAmount.toString(),
-                slippageBps: 100,
+
+              appendOperationLog({
+                operation: "payout",
+                stage: "swap-quote",
+                status: "info",
+                message:
+                  network === "devnet"
+                    ? `Fetching Pyth SOL/USD price for devnet swap sizing (${recipient.name}).`
+                    : `Fetching exact-out Jupiter quote for ${recipient.name}.`,
+                details: {
+                  attempt,
+                  outputMint: outputMint.toBase58(),
+                  outputAmount: targetOutputAmount.toString(),
+                  asset: recipient.asset,
+                  pricingSource: network === "devnet" ? "pyth" : "jupiter",
+                },
               });
-              const swapAmount = BigInt(quote.inAmount);
-              const minOutputAmount = BigInt(quote.outAmount);
+
+              let swapAmount: bigint;
+              let minOutputAmount: bigint;
+
+              if (network === "devnet") {
+                swapAmount = await getPythSwapInputLamports(targetOutputAmount);
+                minOutputAmount = targetOutputAmount;
+              } else {
+                const quote = await getJupiterExactOutQuote({
+                  outputMint: outputMint.toBase58(),
+                  outputAmount: targetOutputAmount.toString(),
+                  slippageBps: 100,
+                });
+                swapAmount = BigInt(quote.inAmount);
+                minOutputAmount = BigInt(quote.outAmount);
+              }
+
+              appendOperationLog({
+                operation: "payout",
+                stage: "swap-quote",
+                status: "success",
+                message:
+                  network === "devnet"
+                    ? "Pyth swap sizing complete."
+                    : "Jupiter quote received.",
+                details: {
+                  inputSol: lamportsToSol(swapAmount),
+                  inputLamports: swapAmount.toString(),
+                  outputUnits: minOutputAmount.toString(),
+                },
+              });
+
               const selection = workingWallet.selectInputs(
                 swapAmount,
                 NATIVE_SOL_MINT,
@@ -1391,6 +1512,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 outputMint,
                 recipientKey,
               );
+              const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
+
+              appendOperationLog({
+                operation: "payout",
+                stage: "recipient-ata-check",
+                status: recipientAtaInfo ? "success" : "warning",
+                message: recipientAtaInfo
+                  ? "Recipient token account exists."
+                  : "Recipient token account is missing; relay may need to create it.",
+                details: {
+                  recipientAta: recipientAta.toBase58(),
+                  exists: Boolean(recipientAtaInfo),
+                  mint: outputMint.toBase58(),
+                },
+              });
+
+              appendOperationLog({
+                operation: "payout",
+                stage: "swap-input-selection",
+                status: "success",
+                message: "Selected shielded SOL inputs for stablecoin swap.",
+                details: {
+                  selectedInputs: selection.inputs.length,
+                  swapLamports: swapAmount.toString(),
+                  selectedLamports: selection.total.toString(),
+                  changeLamports: selection.change.toString(),
+                  recipientAta: recipientAta.toBase58(),
+                },
+              });
+
               commitRun((run) =>
                 updateExecutionState(run, recipient.id, {
                   status: "processing",
@@ -1412,18 +1563,68 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 {
                   connection,
                   programId,
-                  relayUrl: CLOAK_RUNTIME.relayUrl,
+                  relayUrl: activeRuntime.relayUrl,
                   walletPublicKey: walletState.walletPublicKey,
-                  signMessage: walletState.signMessage,
+                  signMessage: async (message) => {
+                    appendOperationLog({
+                      operation: "payout",
+                      stage: "wallet-sign-message",
+                      status: "info",
+                      message: "Wallet message signature requested for swap.",
+                      details: {
+                        bytes: message.length,
+                      },
+                    });
+                    const signed = await walletState.signMessage(message);
+                    appendOperationLog({
+                      operation: "payout",
+                      stage: "wallet-sign-message",
+                      status: "success",
+                      message: "Wallet message signature returned for swap.",
+                    });
+                    return signed;
+                  },
                   cachedMerkleTree: cachedTree,
-                  onProgress: (status) =>
-                    setStatusMessage(`Swap ${recipient.name}: ${status}`),
-                  onProofProgress: (progress) =>
+                  onProgress: (status) => {
+                    setStatusMessage(`Swap ${recipient.name}: ${status}`);
+
+                    const submission = parseSwapSubmissionStatus(status);
+                    if (submission) {
+                      lastSwapRequestId = submission.requestId;
+                      lastSwapState = submission.swapState;
+                      lastSwapSubmissionSignature = submission.signature;
+                    }
+
+                    appendOperationLog({
+                      operation: "payout",
+                      stage: submission ? "swap-submitted" : "sdk-progress",
+                      status: "info",
+                      message: status,
+                      details: submission
+                        ? {
+                            requestId: submission.requestId,
+                            swapState: submission.swapState,
+                            signature: submission.signature,
+                          }
+                        : undefined,
+                    });
+                  },
+                  onProofProgress: (progress) => {
                     setStatusMessage(
                       `Swap ${recipient.name}: proof ${progress}%`,
-                    ),
+                    );
+                    appendOperationLog({
+                      operation: "payout",
+                      stage: "proof-progress",
+                      status: "info",
+                      message: `Swap proof generation ${progress}%.`,
+                      details: {
+                        progress,
+                      },
+                    });
+                  },
                   swapSlippageBps: 100,
-                  swapStatusMaxAttempts: 60,
+                  swapStatusMaxAttempts: 300,
                   swapStatusDelayMs: 2000,
                 },
                 recipientKey,
@@ -1443,6 +1644,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
               cachedTree = swapResult.merkleTree;
               signatures.push(swapResult.signature);
+              appendOperationLog({
+                operation: "payout",
+                stage: "swap-success",
+                status: "success",
+                message: `Cloak swap payout completed for ${recipient.name}.`,
+                details: {
+                  signature: swapResult.signature,
+                  requestId: swapResult.requestId || lastSwapRequestId,
+                  outputUtxos: swapResult.outputUtxos.length,
+                },
+              });
               commitRun((run) =>
                 updateExecutionState(run, recipient.id, {
                   status: "completed",
@@ -1469,23 +1681,129 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               swapSettled = true;
               break;
             } catch (error) {
-              if (isRootNotFoundError(error)) {
+              let relayStatusSummary = "";
+              let relayDiagnosticMessage = "";
+
+              if (lastSwapRequestId) {
+                try {
+                  const relayStatus = await fetchRelayStatus(
+                    activeRuntime.relayUrl,
+                    lastSwapRequestId,
+                  );
+                  const data = relayStatus.body?.data;
+                  relayDiagnosticMessage = [
+                    data?.status,
+                    data?.swap_phase,
+                    data?.error,
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
+                  relayStatusSummary = [
+                    `relayHttp=${relayStatus.status}`,
+                    data?.status ? `status=${data.status}` : null,
+                    data?.swap_phase ? `phase=${data.swap_phase}` : null,
+                    data?.error ? `relayError=${data.error}` : null,
+                    data?.solana_signature
+                      ? `signature=${data.solana_signature}`
+                      : null,
+                    data?.tx_id ? `tx=${data.tx_id}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
+
+                  appendOperationLog({
+                    operation: "payout",
+                    stage: "swap-relay-status",
+                    status: relayStatus.ok ? "info" : "warning",
+                    message: "Fetched Cloak relay status after swap error.",
+                    details: {
+                      requestId: lastSwapRequestId,
+                      httpStatus: relayStatus.status,
+                      relayStatus: data?.status || null,
+                      swapPhase: data?.swap_phase || null,
+                      relayError: data?.error || null,
+                      signature: data?.solana_signature || data?.tx_id || null,
+                      slotsRemaining: data?.slots_remaining ?? null,
+                    },
+                  });
+                } catch (relayError) {
+                  appendOperationLog({
+                    operation: "payout",
+                    stage: "swap-relay-status",
+                    status: "warning",
+                    message: "Could not fetch Cloak relay status after swap error.",
+                    details: {
+                      requestId: lastSwapRequestId,
+                      rawError:
+                        relayError instanceof Error
+                          ? relayError.message
+                          : String(relayError),
+                    },
+                  });
+                }
+              }
+
+              const retryableStaleSwap = isSwapStaleRootProofError(
+                error,
+                relayDiagnosticMessage || relayStatusSummary,
+              );
+
+              appendOperationLog({
+                operation: "payout",
+                stage: "swap-failed",
+                status: retryableStaleSwap && attempt < 3 ? "warning" : "error",
+                message:
+                  retryableStaleSwap && attempt < 3
+                    ? `Cloak swap proof became stale for ${recipient.name}; retrying with a fresh root.`
+                    : `Cloak swap payout failed for ${recipient.name}.`,
+                details: {
+                  attempt,
+                  requestId: lastSwapRequestId,
+                  swapState: lastSwapState,
+                  submissionSignature: lastSwapSubmissionSignature,
+                  rootNotFound: isRootNotFoundError(error),
+                  staleRootProof: retryableStaleSwap,
+                  timedOut: isSwapTimeoutError(error),
+                  rawError: error instanceof Error ? error.message : String(error),
+                },
+              });
+
+              if (isRootNotFoundError(error) || retryableStaleSwap) {
                 cachedTree = undefined;
               }
 
-              if (attempt === 3) {
+              if (
+                attempt === 3 ||
+                (!isRootNotFoundError(error) && !retryableStaleSwap) ||
+                isSwapTimeoutError(error)
+              ) {
+                const diagnosticError = toDiagnosticError(error);
+                const errorWithRelayStatus = relayStatusSummary
+                  ? `${diagnosticError} Relay: ${relayStatusSummary}`
+                  : diagnosticError;
                 commitRun((run) =>
                   updateExecutionState(run, recipient.id, {
                     status: "failed",
-                    error: toDiagnosticError(error),
+                    error: errorWithRelayStatus,
                   }),
                 );
-                throw error;
+                throw new Error(errorWithRelayStatus);
               }
 
               setStatusMessage(
-                `Swap ${recipient.name}: retrying with a fresh quote...`,
+                `Swap ${recipient.name}: stale root/proof detected, retrying with a fresh tree...`,
               );
+              appendOperationLog({
+                operation: "payout",
+                stage: "swap-retry",
+                status: "info",
+                message: "Waiting before retrying the swap with a fresh Merkle root.",
+                details: {
+                  nextAttempt: attempt + 1,
+                  waitMs: 2500,
+                },
+              });
+              await wait(2500);
             }
           }
 
@@ -1532,12 +1850,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [
+      activeRuntime,
       clearStatus,
       clearOperationLogs,
       connection,
       appendOperationLog,
       ensureConnectedWallet,
       manualActivities,
+      network,
       payoutRuns,
       persistManualActivities,
       persistPayoutRuns,
@@ -1548,14 +1868,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ],
   );
 
-  const exportHistoryCsv = useCallback(async (options?: {
+  const viewingKey = useMemo(() => {
+    if (!treasuryOwner) return null;
+    try {
+      return BigInt(treasuryOwner.privateKey).toString(16).padStart(64, "0");
+    } catch {
+      return null;
+    }
+  }, [treasuryOwner]);
+
+  const exportHistoryPdf = useCallback(async (options?: {
     afterTimestamp?: number;
     beforeTimestamp?: number;
   }) => {
     clearStatus();
 
     const generatedAt = Date.now();
-    let csv = "";
     const afterTimestamp = options?.afterTimestamp;
     const beforeTimestamp = options?.beforeTimestamp;
 
@@ -1567,49 +1895,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       throw new Error("Start date must be before end date.");
     }
 
-    if (complianceReport) {
-      csv = formatComplianceCsv(
-        filterComplianceReport(complianceReport, afterTimestamp, beforeTimestamp),
-      );
-    } else {
-      const rows = [
-        [
-          "Created At",
-          "Type",
-          "Asset",
-          "Gross",
-          "Fee",
-          "Net",
-          "Status",
-          "Signature",
-        ],
-        ...activities
-          .filter((activity) =>
-            isWithinWindow(activity.createdAt, afterTimestamp, beforeTimestamp),
-          )
-          .map((activity) => [
-            new Date(activity.createdAt).toISOString(),
-            activity.type,
-            activity.asset,
-            activity.grossAmount.toString(),
-            activity.feeAmount.toString(),
-            activity.netAmount.toString(),
-            activity.status,
-            activity.signature,
-          ]),
-      ];
-      csv = rows.map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
-    }
+    const filtered = activities.filter((a) =>
+      isWithinWindow(a.createdAt, afterTimestamp, beforeTimestamp),
+    );
 
-    downloadCsvFile(csv, `sipher-history-${generatedAt}.csv`);
+    const afterDate = afterTimestamp
+      ? new Date(afterTimestamp).toISOString().split("T")[0]
+      : undefined;
+    const beforeDate = beforeTimestamp
+      ? new Date(beforeTimestamp).toISOString().split("T")[0]
+      : undefined;
+
+    await downloadCompliancePdf(filtered, {
+      network: activeRuntime.network,
+      afterDate,
+      beforeDate,
+    });
 
     const auditActivity = {
       id: `audit-${generatedAt}`,
       type: "audit",
       title:
         typeof afterTimestamp === "number" || typeof beforeTimestamp === "number"
-          ? "Windowed compliance history exported"
-          : "Compliance history exported",
+          ? "Windowed compliance report exported as PDF"
+          : "Compliance report exported as PDF",
       asset: "SOL",
       grossAmount: 0,
       feeAmount: 0,
@@ -1621,12 +1930,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } satisfies TreasuryActivity;
 
     persistManualActivities([auditActivity, ...manualActivities]);
-    setStatusMessage(
-      typeof afterTimestamp === "number" || typeof beforeTimestamp === "number"
-        ? "Compliance CSV exported for the selected window."
-        : "Compliance CSV exported.",
-    );
-  }, [activities, clearStatus, complianceReport, manualActivities, persistManualActivities]);
+    setStatusMessage("Treasury compliance report downloaded as PDF.");
+  }, [activeRuntime.network, activities, clearStatus, manualActivities, persistManualActivities]);
+
+  const switchNetwork = useCallback((nextNetwork: Network) => {
+    setStoredNetwork(nextNetwork);
+    window.location.reload();
+  }, []);
 
   const value: AppContextValue = {
     isConnected: Boolean(publicKey),
@@ -1640,7 +1950,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     payoutRuns,
     activities,
     snapshot,
-    runtime: CLOAK_RUNTIME,
+    runtime: activeRuntime,
+    network,
     statusMessage,
     lastError,
     hasTreasuryOwner: Boolean(treasuryOwner),
@@ -1661,10 +1972,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     shieldFunds,
     createPayoutRun,
     rescanHistory,
-    exportHistoryCsv,
+    exportHistoryPdf,
+    viewingKey,
     clearHistoryCache,
     clearOperationLogs,
     clearStatus,
+    switchNetwork,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
