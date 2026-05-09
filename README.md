@@ -1,5 +1,7 @@
 # Sipher
 
+![Sipher Dashboard](./public/image.png)
+
 Sipher is private treasury operations for Solana teams, powered by Cloak.
 
 Teams can shield treasury funds, run private SOL payouts from shielded balances, track per-recipient execution state, and export finance-readable history without reducing the product to a generic private-send demo.
@@ -11,7 +13,7 @@ Teams can shield treasury funds, run private SOL payouts from shielded balances,
 - Compose reviewed payout runs for contractors, vendors, or contributors
 - Track recipient-level execution status and transaction signatures
 - Scan Cloak history with the treasury viewing key
-- Export compliance-friendly CSV history
+- Export compliance-friendly PDF history reports
 - Route stablecoin payout quotes through a server-side Jupiter quote proxy
 
 ## Tech Stack
