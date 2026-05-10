@@ -1,7 +1,7 @@
 import { LAMPORTS_PER_SOL, calculateFeeBigint } from "@cloak.dev/sdk";
 import type { Asset } from "@/types";
 
-export const SOL_USD_REFERENCE = 165;
+export const SOL_USD_REFERENCE = 93.04;
 export const MIN_SHIELD_SOL = 0.01;
 export const ASSET_DECIMALS: Record<Asset, number> = {
   SOL: 9,
