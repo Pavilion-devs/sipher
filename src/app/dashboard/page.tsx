@@ -126,9 +126,9 @@ export default function DashboardPage() {
           icon={Shield}
         />
         <StatCard
-          title="Shielded Stablecoins"
-          value={`$${formatAmount(snapshot.shieldedUsdc + snapshot.shieldedUsdt)}`}
-          subValue="Stable payouts quote through Jupiter"
+          title="Payout Runs"
+          value={`${snapshot.shieldedUsdc} completed`}
+          subValue={`${snapshot.shieldedUsdt} recipient${snapshot.shieldedUsdt === 1 ? "" : "s"} paid privately`}
           icon={Wallet}
         />
         <StatCard

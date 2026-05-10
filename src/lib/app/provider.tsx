@@ -333,10 +333,15 @@ function buildSnapshot(
     return sum + inferUsdValue(activity.asset, activity.netAmount, solPrice);
   }, 0);
 
+  const completedRuns = payoutRuns.filter((run) => run.status === "completed").length;
+  const totalRecipientsPaid = payoutRuns
+    .filter((run) => run.status === "completed")
+    .reduce((sum, run) => sum + run.totalRecipients, 0);
+
   return {
     shieldedSol: wallet ? lamportsToSol(wallet.getBalance(NATIVE_SOL_MINT)) : 0,
-    shieldedUsdc: 0,
-    shieldedUsdt: 0,
+    shieldedUsdc: completedRuns,
+    shieldedUsdt: totalRecipientsPaid,
     privateVolumeUsd,
     feesPaidUsd: totalFeesUsd,
     auditExports: activities.filter((activity) => activity.type === "audit").length,
@@ -1873,6 +1878,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       persistPayoutRuns,
       persistWallet,
       programId,
+      solPriceUsd,
       treasuryOwner,
       treasuryWallet,
     ],
