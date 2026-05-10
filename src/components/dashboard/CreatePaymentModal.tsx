@@ -52,7 +52,7 @@ export function CreatePayoutRunModal({
   isOpen: boolean;
   onClose: () => void;
 }) {
-  const { createPayoutRun, isSubmittingRun, clearStatus, snapshot, network } = useApp();
+  const { createPayoutRun, isSubmittingRun, clearStatus, snapshot, network, solPriceUsd } = useApp();
   const [step, setStep] = useState<"edit" | "review">("edit");
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
@@ -101,7 +101,7 @@ export function CreatePayoutRunModal({
       recipients.reduce((sum, recipient) => {
         const amount = parseRecipientAmount(recipient.amount);
         const normalized =
-          recipient.asset === "SOL" ? amount * 165 : amount;
+          recipient.asset === "SOL" ? amount * solPriceUsd : amount;
         return sum + normalized;
       }, 0),
     [recipients],

@@ -45,9 +45,10 @@ import type {
   WalletOption,
 } from "@/types";
 import { CLOAK_RUNTIME, getMintForAsset, getRuntimeForNetwork } from "@/lib/cloak/config";
-import { getPythSwapInputLamports } from "@/lib/pyth/client";
+import { getPythSolUsd, getPythSwapInputLamports } from "@/lib/pyth/client";
 import {
   MIN_SHIELD_SOL,
+  SOL_USD_REFERENCE,
   assetAmountToUnits,
   bigintToDisplayAmount,
   grossUpSolWithdrawal,
@@ -94,6 +95,7 @@ type AppContextValue = {
   snapshot: TreasurySnapshot;
   runtime: CloakRuntimeConfig;
   network: Network;
+  solPriceUsd: number;
   statusMessage: string | null;
   lastError: string | null;
   hasTreasuryOwner: boolean;
@@ -320,14 +322,15 @@ function buildSnapshot(
   wallet: UtxoWallet | null,
   activities: TreasuryActivity[],
   payoutRuns: PayoutRun[],
+  solPrice: number,
 ) {
   const totalFeesUsd = activities.reduce((sum, activity) => {
-    return sum + inferUsdValue(activity.asset, activity.feeAmount);
+    return sum + inferUsdValue(activity.asset, activity.feeAmount, solPrice);
   }, 0);
 
   const privateVolumeUsd = activities.reduce((sum, activity) => {
     if (activity.direction !== "out" || activity.status !== "confirmed") return sum;
-    return sum + inferUsdValue(activity.asset, activity.netAmount);
+    return sum + inferUsdValue(activity.asset, activity.netAmount, solPrice);
   }, 0);
 
   return {
@@ -514,6 +517,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const merkleTreeRef = useRef<MerkleTree | null>(null);
   const [network] = useState<Network>(() => getStoredNetwork());
   const activeRuntime = useMemo(() => getRuntimeForNetwork(network), [network]);
+  const [solPriceUsd, setSolPriceUsd] = useState(SOL_USD_REFERENCE);
+
+  useEffect(() => {
+    getPythSolUsd()
+      .then(setSolPriceUsd)
+      .catch(() => {}); // silently keep the fallback on failure
+  }, []);
   const connection = useMemo(
     () => new Connection(activeRuntime.rpcUrl, "confirmed"),
     [activeRuntime.rpcUrl],
@@ -565,8 +575,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [manualActivities, scannedActivities],
   );
   const snapshot = useMemo(
-    () => buildSnapshot(treasuryWallet, activities, payoutRuns),
-    [activities, payoutRuns, treasuryWallet],
+    () => buildSnapshot(treasuryWallet, activities, payoutRuns, solPriceUsd),
+    [activities, payoutRuns, solPriceUsd, treasuryWallet],
   );
 
   useEffect(() => {
@@ -1168,7 +1178,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         createdAt: now,
         recipients: cleanedRecipients,
         totalUsd: cleanedRecipients.reduce(
-          (sum, recipient) => sum + inferUsdValue(recipient.asset, recipient.amount),
+          (sum, recipient) => sum + inferUsdValue(recipient.asset, recipient.amount, solPriceUsd),
           0,
         ),
         totalRecipients: cleanedRecipients.length,
@@ -1952,6 +1962,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     snapshot,
     runtime: activeRuntime,
     network,
+    solPriceUsd,
     statusMessage,
     lastError,
     hasTreasuryOwner: Boolean(treasuryOwner),

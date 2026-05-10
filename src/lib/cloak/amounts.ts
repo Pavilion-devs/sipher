@@ -30,8 +30,8 @@ export function bigintToDisplayAmount(value: bigint, decimals: number) {
   return Number(value) / 10 ** decimals;
 }
 
-export function inferUsdValue(asset: Asset | "MULTI", amount: number) {
-  if (asset === "SOL") return amount * SOL_USD_REFERENCE;
+export function inferUsdValue(asset: Asset | "MULTI", amount: number, solPrice = SOL_USD_REFERENCE) {
+  if (asset === "SOL") return amount * solPrice;
   return amount;
 }
 
