@@ -1,7 +1,7 @@
 "use client";
 
 import "@/lib/polyfills/buffer";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -44,7 +44,11 @@ function mapTxType(txType: string): TreasuryActivity["type"] {
 }
 
 export default function AuditPage() {
-  const [network, setNetwork] = useState<Network>(() => getStoredNetwork());
+  const [network, setNetwork] = useState<Network>("mainnet");
+
+  useEffect(() => {
+    setNetwork(getStoredNetwork());
+  }, []);
   const [viewingKey, setViewingKey] = useState("");
   const [isScanning, setIsScanning] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
